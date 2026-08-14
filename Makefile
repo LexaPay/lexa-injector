@@ -16,3 +16,6 @@ lint:
 
 clean:
 	cargo clean
+
+# Makefile runtime config
+DEBUG ?= false
