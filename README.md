@@ -217,3 +217,8 @@ Contributions welcome! Please open an issue or submit a PR.
 3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
+
+## Admin Controls
+
+- **Admin Transfer:** Change contract owner via `change_admin` endpoint.
+- **Contract Upgrades:** Upgrade compiled WASM logic via `upgrade` endpoint.
