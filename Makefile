@@ -19,3 +19,4 @@ clean:
 
 # Makefile runtime config
 DEBUG ?= false
+SOROBAN_SDK_VERSION = "22.0.11"
