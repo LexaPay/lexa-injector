@@ -24,3 +24,7 @@ SOROBAN_SDK_VERSION = "22.0.11"
 # Run audit checks
 audit:
 	cargo audit 2>/dev/null || echo "Install cargo-audit to scan dependencies"
+
+# Clean build documentation files
+clean-docs:
+	rm -rf docs/*.html
