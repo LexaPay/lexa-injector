@@ -2,6 +2,17 @@
 use super::*;
 use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env, Symbol, Vec};
 
+/// LaxaFlow Payroll Integration and Simulation Tests
+///
+/// These tests verify contract operations and payroll states:
+/// 1. `test_streaming_payroll`: Simulates the progression of ledger time to verify Alice's
+///    continuous salary accumulation over 100s and 150s intervals.
+/// 2. `test_revenue_split_distribution`: Verifies percentage-based distribution across
+///    development and marketing pools using basis points (BPS).
+/// 3. `test_unauthorized_add_member`: Assures only the contract admin can manage staff.
+/// 4. `test_remove_member_stops_accrual`: Checks that removing a member auto-pays
+///    their outstanding balance and stops future salary streams.
+
 // ─── Helper: advance the ledger timestamp ──────────────────────────
 fn advance_time(env: &Env, seconds: u64) {
     let current = env.ledger().timestamp();
