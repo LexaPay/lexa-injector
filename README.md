@@ -222,3 +222,5 @@ Contributions welcome! Please open an issue or submit a PR.
 
 - **Admin Transfer:** Change contract owner via `change_admin` endpoint.
 - **Contract Upgrades:** Upgrade compiled WASM logic via `upgrade` endpoint.
+
+- **Stream Rate Management:** Dynamically adjust salary rates using `update_stream_rate` endpoint.
