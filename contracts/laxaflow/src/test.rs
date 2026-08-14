@@ -12,6 +12,9 @@ use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env,
 /// 3. `test_unauthorized_add_member`: Assures only the contract admin can manage staff.
 /// 4. `test_remove_member_stops_accrual`: Checks that removing a member auto-pays
 ///    their outstanding balance and stops future salary streams.
+/// 5. `test_stream_cliff`: Asserts that claiming remains locked until the cliff period expires.
+/// 6. `test_stream_pause_resume`: Verifies that pausing stops stream accrual and resume resumes it.
+/// 7. `test_global_emergency_pause`: Assures global pause prevents deposits/distributions.
 
 // ─── Helper: advance the ledger timestamp ──────────────────────────
 fn advance_time(env: &Env, seconds: u64) {
@@ -50,9 +53,9 @@ fn test_streaming_payroll() {
     client.deposit(&admin, &100_000);
     assert_eq!(client.get_balance(), 100_000);
 
-    // Add a team member earning 10 tokens/second
+    // Add a team member earning 10 tokens/second (no cliff)
     let alice = Address::generate(&env);
-    client.add_member(&admin, &alice, &10);
+    client.add_member(&admin, &alice, &10, &0);
 
     // Advance 100 seconds → Alice should have accrued 1 000
     advance_time(&env, 100);
@@ -145,7 +148,7 @@ fn test_unauthorized_add_member() {
     // An impostor tries to add a member
     let impostor = Address::generate(&env);
     let member = Address::generate(&env);
-    client.add_member(&impostor, &member, &10);
+    client.add_member(&impostor, &member, &10, &0);
 }
 
 // ─── Test 4: Remove member stops accrual ───────────────────────────
@@ -170,7 +173,7 @@ fn test_remove_member_stops_accrual() {
     client.deposit(&admin, &50_000);
 
     let bob = Address::generate(&env);
-    client.add_member(&admin, &bob, &100);
+    client.add_member(&admin, &bob, &100, &0);
 
     // Advance 10 seconds → 1 000 accrued
     advance_time(&env, 10);
@@ -182,4 +185,109 @@ fn test_remove_member_stops_accrual() {
     // Advance 100 more seconds — no new accrual
     advance_time(&env, 100);
     assert_eq!(client.get_accrued(&bob), 0);
+}
+
+// ─── Test 5: Stream Cliff ──────────────────────────────────────────
+#[test]
+fn test_stream_cliff() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LaxaFlow, ());
+    let client = LaxaFlowClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_id = token_contract.address();
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &token_id);
+
+    let charlie = Address::generate(&env);
+    let now = env.ledger().timestamp();
+    let cliff = now + 100; // Cliff in 100 seconds
+
+    client.add_member(&admin, &charlie, &10, &cliff);
+
+    // Advance 50 seconds (pre-cliff)
+    advance_time(&env, 50);
+    assert_eq!(client.get_accrued(&charlie), 0); // No visible accrual pre-cliff
+
+    // Claim attempt before cliff should fail
+    let res = client.try_claim(&charlie);
+    assert!(res.is_err(), "Expected claim to fail before cliff");
+
+    // Advance past cliff (e.g. 60 more seconds → total 110s)
+    advance_time(&env, 60);
+    assert_eq!(client.get_accrued(&charlie), 1100); // Fully accrues retrospectively
+}
+
+// ─── Test 6: Stream Pause and Resume ───────────────────────────────
+#[test]
+fn test_stream_pause_resume() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LaxaFlow, ());
+    let client = LaxaFlowClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_id = token_contract.address();
+    let token_client = soroban_sdk::token::Client::new(&env, &token_id);
+    let sac_client = soroban_sdk::token::StellarAssetClient::new(&env, &token_id);
+
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &token_id);
+
+    sac_client.mint(&admin, &10_000);
+    client.deposit(&admin, &10_000);
+
+    let dave = Address::generate(&env);
+    client.add_member(&admin, &dave, &10, &0);
+
+    // Advance 50 seconds → 500 accrued
+    advance_time(&env, 50);
+    assert_eq!(client.get_accrued(&dave), 500);
+
+    // Admin pauses dave's stream -> dave receives accrued 500 automatically
+    client.pause_stream(&admin, &dave);
+    assert_eq!(token_client.balance(&dave), 500);
+
+    // Advance 100 seconds while paused
+    advance_time(&env, 100);
+    assert_eq!(client.get_accrued(&dave), 0); // No new accrual while paused
+
+    // Resume the stream
+    client.resume_stream(&admin, &dave);
+
+    // Advance 50 seconds -> Dave should now accrue 500 more
+    advance_time(&env, 50);
+    assert_eq!(client.get_accrued(&dave), 500);
+}
+
+// ─── Test 7: Global Emergency Pause ────────────────────────────────
+#[test]
+fn test_global_emergency_pause() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LaxaFlow, ());
+    let client = LaxaFlowClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_id = token_contract.address();
+
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &token_id);
+
+    assert_eq!(client.is_paused(), false);
+
+    // Trigger emergency pause
+    client.set_paused(&admin, &true);
+    assert_eq!(client.is_paused(), true);
+
+    // Deposit should fail
+    let res = client.try_deposit(&admin, &100i128);
+    assert!(res.is_err(), "Deposit should fail when contract is paused");
 }

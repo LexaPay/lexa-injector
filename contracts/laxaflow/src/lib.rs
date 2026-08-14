@@ -1,6 +1,6 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, Env, Address, Symbol, Vec,
+    contract, contractimpl, contracttype, symbol_short, Env, Address, Symbol, Vec,
 };
 
 #[cfg(test)]
@@ -18,6 +18,7 @@ pub enum DataKey {
     Stream(Address),
     Pool(Symbol),
     PoolList,
+    Paused,
 }
 
 // ──────────────────────────── Data Types ────────────────────────────
@@ -34,6 +35,12 @@ pub struct StreamConfig {
     pub last_claim: u64,
     /// Cumulative tokens claimed so far.
     pub total_claimed: i128,
+    /// Cliff timestamp (no claims allowed before this time).
+    pub cliff: u64,
+    /// Status indicating if stream is paused.
+    pub paused: bool,
+    /// Timestamp of last pause action.
+    pub paused_at: u64,
 }
 
 /// A revenue-split pool.
@@ -65,6 +72,7 @@ impl LaxaFlow {
         admin.require_auth();
         env.storage().persistent().set(&DataKey::Admin, &admin);
         env.storage().persistent().set(&DataKey::Token, &token);
+        env.storage().persistent().set(&DataKey::Paused, &false);
     }
 
     // ─── Treasury ─────────────────────────────────────────────────
@@ -72,6 +80,7 @@ impl LaxaFlow {
     /// Deposit tokens into the contract treasury.
     pub fn deposit(env: Env, caller: Address, amount: i128) {
         assert!(amount > 0, "Amount must be positive");
+        assert!(!Self::is_paused(&env), "Contract is paused");
         caller.require_auth();
 
         let token = Self::token(&env);
@@ -88,8 +97,8 @@ impl LaxaFlow {
 
     // ─── Streaming Payroll ────────────────────────────────────────
 
-    /// Register a team member with a per-second salary rate.
-    pub fn add_member(env: Env, admin: Address, member: Address, rate_per_second: i128) {
+    /// Register a team member with a per-second salary rate and optional cliff timestamp.
+    pub fn add_member(env: Env, admin: Address, member: Address, rate_per_second: i128, cliff: u64) {
         Self::require_admin(&env, &admin);
         assert!(rate_per_second > 0, "Rate must be positive");
 
@@ -99,8 +108,17 @@ impl LaxaFlow {
             start: now,
             last_claim: now,
             total_claimed: 0,
+            cliff,
+            paused: false,
+            paused_at: 0,
         };
-        env.storage().persistent().set(&DataKey::Stream(member), &config);
+        env.storage().persistent().set(&DataKey::Stream(member.clone()), &config);
+
+        // Emit stream addition event
+        env.events().publish(
+            (symbol_short!("add_str"), member),
+            (rate_per_second, cliff),
+        );
     }
 
     /// Deactivate a member's stream (rate → 0). They can still claim
@@ -111,26 +129,32 @@ impl LaxaFlow {
         let key = DataKey::Stream(member.clone());
         if env.storage().persistent().has(&key) {
             let mut cfg: StreamConfig = env.storage().persistent().get(&key).unwrap();
-            // Snapshot accrued amount by recording the current time, then zero the rate.
-            cfg.last_claim = env.ledger().timestamp();
-            let elapsed = cfg.last_claim - cfg.start;
-            // Store whatever was accrued but unclaimed as a lump‑sum "rate" trick:
-            // we'll set start == last_claim so next claim computes (now - last_claim)*0 = 0
-            // but we do a final transfer here first.
-            let accrued = (elapsed as i128) * cfg.rate - cfg.total_claimed;
+            let now = env.ledger().timestamp();
+
+            // Settle final accrued balance before zeroing
+            let accrued = Self::compute_accrued_internal(&cfg, now);
             if accrued > 0 {
                 let token = Self::token(&env);
                 let client = soroban_sdk::token::Client::new(&env, &token);
                 client.transfer(&env.current_contract_address(), &member, &accrued);
                 cfg.total_claimed += accrued;
             }
+
             cfg.rate = 0;
+            cfg.last_claim = now;
             env.storage().persistent().set(&key, &cfg);
+
+            // Emit stream removal event
+            env.events().publish(
+                (symbol_short!("rem_str"), member),
+                accrued,
+            );
         }
     }
 
-    /// Claim all accrued streaming salary.  Returns the amount transferred.
+    /// Claim all accrued streaming salary. Returns the amount transferred.
     pub fn claim(env: Env, member: Address) -> i128 {
+        assert!(!Self::is_paused(&env), "Contract is paused");
         member.require_auth();
 
         let key = DataKey::Stream(member.clone());
@@ -141,7 +165,9 @@ impl LaxaFlow {
             .expect("Not a registered member");
 
         let now = env.ledger().timestamp();
-        let accrued = Self::compute_accrued(&cfg, now);
+        assert!(now >= cfg.cliff, "Cliff period not met");
+
+        let accrued = Self::compute_accrued_internal(&cfg, now);
 
         if accrued <= 0 {
             return 0;
@@ -151,18 +177,84 @@ impl LaxaFlow {
         let client = soroban_sdk::token::Client::new(&env, &token);
         client.transfer(&env.current_contract_address(), &member, &accrued);
 
+        if cfg.paused {
+            cfg.paused_at = now;
+        }
         cfg.last_claim = now;
         cfg.total_claimed += accrued;
         env.storage().persistent().set(&key, &cfg);
 
+        // Emit claim event
+        env.events().publish(
+            (symbol_short!("claim"), member),
+            accrued,
+        );
+
         accrued
+    }
+
+    /// Pause a specific member's salary stream (Admin only).
+    pub fn pause_stream(env: Env, admin: Address, member: Address) {
+        Self::require_admin(&env, &admin);
+        let key = DataKey::Stream(member.clone());
+        let mut cfg: StreamConfig = env.storage().persistent().get(&key).expect("Not a registered member");
+
+        if !cfg.paused {
+            let now = env.ledger().timestamp();
+            // Accrue and freeze current state up to pause time
+            let accrued = Self::compute_accrued_internal(&cfg, now);
+            cfg.total_claimed += accrued; // Treat accrued up to pause as snapshot
+            cfg.last_claim = now;
+            cfg.paused = true;
+            cfg.paused_at = now;
+            env.storage().persistent().set(&key, &cfg);
+
+            // Transfer accrued balance to avoid locking user funds
+            if accrued > 0 {
+                let token = Self::token(&env);
+                let client = soroban_sdk::token::Client::new(&env, &token);
+                client.transfer(&env.current_contract_address(), &member, &accrued);
+            }
+
+            env.events().publish(
+                (symbol_short!("pause_st"), member),
+                accrued,
+            );
+        }
+    }
+
+    /// Resume a paused salary stream (Admin only).
+    pub fn resume_stream(env: Env, admin: Address, member: Address) {
+        Self::require_admin(&env, &admin);
+        let key = DataKey::Stream(member.clone());
+        let mut cfg: StreamConfig = env.storage().persistent().get(&key).expect("Not a registered member");
+
+        if cfg.paused {
+            let now = env.ledger().timestamp();
+            cfg.paused = false;
+            cfg.last_claim = now;
+            cfg.paused_at = 0;
+            env.storage().persistent().set(&key, &cfg);
+
+            env.events().publish(
+                (symbol_short!("resum_st"), member),
+                now,
+            );
+        }
     }
 
     /// View accrued but unclaimed earnings for a member.
     pub fn get_accrued(env: Env, member: Address) -> i128 {
         let key = DataKey::Stream(member);
         match env.storage().persistent().get::<_, StreamConfig>(&key) {
-            Some(cfg) => Self::compute_accrued(&cfg, env.ledger().timestamp()),
+            Some(cfg) => {
+                let now = env.ledger().timestamp();
+                if now < cfg.cliff {
+                    0
+                } else {
+                    Self::compute_accrued_internal(&cfg, now)
+                }
+            }
             None => 0,
         }
     }
@@ -204,6 +296,7 @@ impl LaxaFlow {
     pub fn distribute(env: Env, admin: Address, total_amount: i128) {
         Self::require_admin(&env, &admin);
         assert!(total_amount > 0, "Amount must be positive");
+        assert!(!Self::is_paused(&env), "Contract is paused");
 
         let names: Vec<Symbol> = env
             .storage()
@@ -231,11 +324,27 @@ impl LaxaFlow {
                 }
             }
         }
+
+        env.events().publish(
+            (symbol_short!("distrib"), admin),
+            total_amount,
+        );
     }
 
     /// Returns the address of the token managed by this contract.
     pub fn get_token(env: Env) -> Address {
         Self::token(&env)
+    }
+
+    /// Gets global paused status.
+    pub fn is_paused(env: &Env) -> bool {
+        env.storage().persistent().get(&DataKey::Paused).unwrap_or(false)
+    }
+
+    /// Globally pause/unpause contract (Admin only).
+    pub fn set_paused(env: Env, admin: Address, paused: bool) {
+        Self::require_admin(&env, &admin);
+        env.storage().persistent().set(&DataKey::Paused, &paused);
     }
 
     // ─── Helpers ──────────────────────────────────────────────────
@@ -257,8 +366,8 @@ impl LaxaFlow {
         assert!(*caller == admin, "Unauthorized");
     }
 
-    fn compute_accrued(cfg: &StreamConfig, now: u64) -> i128 {
-        if cfg.rate == 0 || now <= cfg.last_claim {
+    fn compute_accrued_internal(cfg: &StreamConfig, now: u64) -> i128 {
+        if cfg.rate == 0 || cfg.paused || now <= cfg.last_claim {
             return 0;
         }
         let elapsed = now - cfg.last_claim;
