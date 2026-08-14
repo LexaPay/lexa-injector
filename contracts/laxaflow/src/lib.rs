@@ -387,3 +387,5 @@ impl LaxaFlow {
     }
 }
 pub mod version;
+
+// NOTE: basis points must sum to 10,000 (100% split).
