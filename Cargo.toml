@@ -12,3 +12,7 @@ strip = true
 lto = true
 codegen-units = 1
 panic = "abort"
+
+[workspace.package]
+authors = ["LexaPay Developers <dev@lexapay.org>"]
+homepage = "https://lexapay.org"
