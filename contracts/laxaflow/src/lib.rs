@@ -233,6 +233,11 @@ impl LaxaFlow {
         }
     }
 
+    /// Returns the address of the token managed by this contract.
+    pub fn get_token(env: Env) -> Address {
+        Self::token(&env)
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────
 
     fn token(env: &Env) -> Address {

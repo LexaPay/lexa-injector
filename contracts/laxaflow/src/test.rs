@@ -31,6 +31,9 @@ fn test_streaming_payroll() {
     let admin = Address::generate(&env);
     client.initialize(&admin, &token_id);
 
+    // Verify token getter endpoint
+    assert_eq!(client.get_token(), token_id);
+
     // Fund the treasury: admin gets minted tokens then deposits
     sac_client.mint(&admin, &100_000);
     client.deposit(&admin, &100_000);
