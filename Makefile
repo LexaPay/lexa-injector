@@ -28,3 +28,11 @@ audit:
 # Clean build documentation files
 clean-docs:
 	rm -rf docs/*.html
+
+# Run lint checks
+clippy-strict:
+	cargo clippy --all-targets --release -- -D warnings
+
+# Format check
+fmt-check:
+	cargo fmt --all -- --check
