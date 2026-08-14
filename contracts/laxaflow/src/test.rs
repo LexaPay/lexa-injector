@@ -291,3 +291,12 @@ fn test_global_emergency_pause() {
     let res = client.try_deposit(&admin, &100i128);
     assert!(res.is_err(), "Deposit should fail when contract is paused");
 }
+
+#[test]
+#[should_panic(expected = "Not initialized")]
+fn test_uninitialized_get_token() {
+    let env = Env::default();
+    let contract_id = env.register(LaxaFlow, ());
+    let client = LaxaFlowClient::new(&env, &contract_id);
+    client.get_token();
+}
