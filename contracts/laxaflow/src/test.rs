@@ -300,3 +300,30 @@ fn test_uninitialized_get_token() {
     let client = LaxaFlowClient::new(&env, &contract_id);
     client.get_token();
 }
+
+#[test]
+fn test_change_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LaxaFlow, ());
+    let client = LaxaFlowClient::new(&env, &contract_id);
+
+    let token_id = Address::generate(&env);
+    let admin1 = Address::generate(&env);
+    let admin2 = Address::generate(&env);
+
+    client.initialize(&admin1, &token_id);
+
+    // Transfer admin ownership from admin1 to admin2
+    client.change_admin(&admin1, &admin2);
+
+    // Verify admin2 can now perform admin functions (like pausing the contract)
+    client.set_paused(&admin2, &true);
+    assert_eq!(client.is_paused(), true);
+
+    // Verify admin1 is now unauthorized and cannot pause/unpause
+    let res = client.try_set_paused(&admin1, &false);
+    assert!(res.is_err(), "Previous admin should be unauthorized");
+}
+

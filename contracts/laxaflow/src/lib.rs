@@ -1,6 +1,6 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Env, Address, Symbol, Vec,
+    contract, contractimpl, contracttype, symbol_short, Env, Address, Symbol, Vec, BytesN,
 };
 
 #[cfg(test)]
@@ -345,6 +345,18 @@ impl LaxaFlow {
     pub fn set_paused(env: Env, admin: Address, paused: bool) {
         Self::require_admin(&env, &admin);
         env.storage().persistent().set(&DataKey::Paused, &paused);
+    }
+
+    /// Upgrades the contract WASM code to a new version (Admin only).
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) {
+        Self::require_admin(&env, &admin);
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
+
+    /// Transfers contract administration to a new address (Admin only).
+    pub fn change_admin(env: Env, admin: Address, new_admin: Address) {
+        Self::require_admin(&env, &admin);
+        env.storage().persistent().set(&DataKey::Admin, &new_admin);
     }
 
     // ─── Helpers ──────────────────────────────────────────────────
