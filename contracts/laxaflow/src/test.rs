@@ -327,3 +327,40 @@ fn test_change_admin() {
     assert!(res.is_err(), "Previous admin should be unauthorized");
 }
 
+#[test]
+fn test_update_stream_rate() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LaxaFlow, ());
+    let client = LaxaFlowClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_id = token_contract.address();
+    let token_client = soroban_sdk::token::Client::new(&env, &token_id);
+    let sac_client = soroban_sdk::token::StellarAssetClient::new(&env, &token_id);
+
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &token_id);
+
+    sac_client.mint(&admin, &50_000);
+    client.deposit(&admin, &50_000);
+
+    let employee = Address::generate(&env);
+    client.add_member(&admin, &employee, &10i128, &0); // 10 tokens/sec
+
+    // Advance 10 seconds -> 100 tokens accrued
+    advance_time(&env, 10);
+    assert_eq!(client.get_accrued(&employee), 100);
+
+    // Update rate to 20 tokens/sec -> auto-pays old accrued 100 tokens
+    client.update_stream_rate(&admin, &employee, &20i128);
+    assert_eq!(token_client.balance(&employee), 100);
+
+    // Advance another 10 seconds at new rate -> 200 tokens accrued
+    advance_time(&env, 10);
+    assert_eq!(client.get_accrued(&employee), 200);
+}
+
+

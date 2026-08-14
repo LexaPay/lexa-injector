@@ -243,6 +243,40 @@ impl LaxaFlow {
         }
     }
 
+    /// Dynamically updates a member's streaming rate per second (Admin only).
+    /// Accrued salary up to this moment is automatically claimed and paid out at the old rate.
+    pub fn update_stream_rate(env: Env, admin: Address, member: Address, new_rate: i128) {
+        Self::require_admin(&env, &admin);
+        assert!(new_rate > 0, "Rate must be positive");
+
+        let key = DataKey::Stream(member.clone());
+        let mut cfg: StreamConfig = env.storage().persistent().get(&key).expect("Not a registered member");
+        let now = env.ledger().timestamp();
+
+        // 1. Calculate and payout final accrued salary at old rate
+        let accrued = Self::compute_accrued_internal(&cfg, now);
+        if accrued > 0 {
+            let token = Self::token(&env);
+            let client = soroban_sdk::token::Client::new(&env, &token);
+            client.transfer(&env.current_contract_address(), &member, &accrued);
+            cfg.total_claimed += accrued;
+        }
+
+        // 2. Set new rate and reset tracking variables
+        cfg.rate = new_rate;
+        cfg.last_claim = now;
+        if cfg.paused {
+            cfg.paused_at = now;
+        }
+        env.storage().persistent().set(&key, &cfg);
+
+        // Emit stream rate update event
+        env.events().publish(
+            (symbol_short!("upd_rate"), member),
+            new_rate,
+        );
+    }
+
     /// View accrued but unclaimed earnings for a member.
     pub fn get_accrued(env: Env, member: Address) -> i128 {
         let key = DataKey::Stream(member);
