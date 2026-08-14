@@ -8,6 +8,8 @@ mod test;
 
 // ──────────────────────────── Data Keys ────────────────────────────
 
+/// Persistent storage keys. Using typed keys prevents storage collision/overwrite bugs,
+/// as Soroban namespaces contract state variables by their rust type mapping.
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
