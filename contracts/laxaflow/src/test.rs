@@ -363,4 +363,26 @@ fn test_update_stream_rate() {
     assert_eq!(client.get_accrued(&employee), 200);
 }
 
+#[test]
+fn test_check_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LaxaFlow, ());
+    let client = LaxaFlowClient::new(&env, &contract_id);
+
+    let token_id = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let fake_admin = Address::generate(&env);
+
+    // Initial state (not initialized) should return false
+    assert_eq!(client.check_admin(&admin), false);
+
+    client.initialize(&admin, &token_id);
+
+    // After initialization, check_admin should return true for actual admin
+    assert_eq!(client.check_admin(&admin), true);
+    assert_eq!(client.check_admin(&fake_admin), false);
+}
+
+
 

@@ -393,6 +393,14 @@ impl LaxaFlow {
         env.storage().persistent().set(&DataKey::Admin, &new_admin);
     }
 
+    /// Checks if a given address is the current admin.
+    pub fn check_admin(env: Env, admin: Address) -> bool {
+        match env.storage().persistent().get::<_, Address>(&DataKey::Admin) {
+            Some(curr_admin) => curr_admin == admin,
+            None => false,
+        }
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────
 
     fn token(env: &Env) -> Address {
