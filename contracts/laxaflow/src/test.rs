@@ -277,19 +277,94 @@ fn test_global_emergency_pause() {
     let token_admin = Address::generate(&env);
     let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
     let token_id = token_contract.address();
+    let token_client = soroban_sdk::token::Client::new(&env, &token_id);
+    let sac_client = soroban_sdk::token::StellarAssetClient::new(&env, &token_id);
 
     let admin = Address::generate(&env);
     client.initialize(&admin, &token_id);
 
+    // Initial state: not paused
     assert_eq!(client.is_paused(), false);
 
-    // Trigger emergency pause
+    // Deposit and member setup before pause
+    sac_client.mint(&admin, &100_000);
+    client.deposit(&admin, &50_000);
+    assert_eq!(client.get_balance(), 50_000);
+
+    let member = Address::generate(&env);
+    client.add_member(&admin, &member, &10i128, &0);
+
+    // Configure pool before pause
+    let dev1 = Address::generate(&env);
+    let pool = PoolConfig {
+        name: Symbol::new(&env, "dev"),
+        bps: 10_000,
+        members: Vec::from_array(&env, [dev1.clone()]),
+    };
+    client.set_pools(&admin, &Vec::from_array(&env, [pool]));
+
+    // Advance time so member accrues salary
+    advance_time(&env, 10);
+    assert_eq!(client.get_accrued(&member), 100);
+
+    // ─── Trigger Emergency Pause ───
     client.set_paused(&admin, &true);
     assert_eq!(client.is_paused(), true);
 
-    // Deposit should fail
-    let res = client.try_deposit(&admin, &100i128);
-    assert!(res.is_err(), "Deposit should fail when contract is paused");
+    // 1. Deposits must fail when paused
+    let res_deposit = client.try_deposit(&admin, &1_000i128);
+    assert!(res_deposit.is_err(), "Deposit should fail when contract is paused");
+
+    // 2. Claims must fail when paused
+    let res_claim = client.try_claim(&member);
+    assert!(res_claim.is_err(), "Claim should fail when contract is paused");
+
+    // 3. Distributions must fail when paused
+    let res_distribute = client.try_distribute(&admin, &1_000i128);
+    assert!(res_distribute.is_err(), "Distribute should fail when contract is paused");
+
+    // 4. Other state mutations must fail when paused
+    let new_member = Address::generate(&env);
+    assert!(client.try_add_member(&admin, &new_member, &5i128, &0).is_err());
+    assert!(client.try_remove_member(&admin, &member).is_err());
+    assert!(client.try_pause_stream(&admin, &member).is_err());
+    assert!(client.try_resume_stream(&admin, &member).is_err());
+    assert!(client.try_update_stream_rate(&admin, &member, &20i128).is_err());
+    assert!(client.try_set_pools(&admin, &Vec::new(&env)).is_err());
+
+    // ─── Unpause & Verify Operations Resume ───
+    client.set_paused(&admin, &false);
+    assert_eq!(client.is_paused(), false);
+
+    // Deposits succeed after unpause
+    client.deposit(&admin, &10_000);
+    assert_eq!(client.get_balance(), 60_000);
+
+    // Claims succeed after unpause
+    let claimed = client.claim(&member);
+    assert_eq!(claimed, 100);
+    assert_eq!(token_client.balance(&member), 100);
+
+    // Distributions succeed after unpause
+    client.distribute(&admin, &1_000);
+    assert_eq!(token_client.balance(&dev1), 1_000);
+}
+
+#[test]
+#[should_panic(expected = "Unauthorized")]
+fn test_unauthorized_set_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LaxaFlow, ());
+    let client = LaxaFlowClient::new(&env, &contract_id);
+
+    let token_id = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let impostor = Address::generate(&env);
+
+    client.initialize(&admin, &token_id);
+    client.set_paused(&impostor, &true);
 }
 
 #[test]

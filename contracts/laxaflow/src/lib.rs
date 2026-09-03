@@ -100,6 +100,7 @@ impl LaxaFlow {
     /// Register a team member with a per-second salary rate and optional cliff timestamp.
     pub fn add_member(env: Env, admin: Address, member: Address, rate_per_second: i128, cliff: u64) {
         Self::require_admin(&env, &admin);
+        assert!(!Self::is_paused(&env), "Contract is paused");
         assert!(rate_per_second > 0, "Rate must be positive");
 
         let now = env.ledger().timestamp();
@@ -125,6 +126,7 @@ impl LaxaFlow {
     /// any tokens accrued up to this point.
     pub fn remove_member(env: Env, admin: Address, member: Address) {
         Self::require_admin(&env, &admin);
+        assert!(!Self::is_paused(&env), "Contract is paused");
 
         let key = DataKey::Stream(member.clone());
         if env.storage().persistent().has(&key) {
@@ -196,6 +198,7 @@ impl LaxaFlow {
     /// Pause a specific member's salary stream (Admin only).
     pub fn pause_stream(env: Env, admin: Address, member: Address) {
         Self::require_admin(&env, &admin);
+        assert!(!Self::is_paused(&env), "Contract is paused");
         let key = DataKey::Stream(member.clone());
         let mut cfg: StreamConfig = env.storage().persistent().get(&key).expect("Not a registered member");
 
@@ -226,6 +229,7 @@ impl LaxaFlow {
     /// Resume a paused salary stream (Admin only).
     pub fn resume_stream(env: Env, admin: Address, member: Address) {
         Self::require_admin(&env, &admin);
+        assert!(!Self::is_paused(&env), "Contract is paused");
         let key = DataKey::Stream(member.clone());
         let mut cfg: StreamConfig = env.storage().persistent().get(&key).expect("Not a registered member");
 
@@ -247,6 +251,7 @@ impl LaxaFlow {
     /// Accrued salary up to this moment is automatically claimed and paid out at the old rate.
     pub fn update_stream_rate(env: Env, admin: Address, member: Address, new_rate: i128) {
         Self::require_admin(&env, &admin);
+        assert!(!Self::is_paused(&env), "Contract is paused");
         assert!(new_rate > 0, "Rate must be positive");
 
         let key = DataKey::Stream(member.clone());
@@ -307,6 +312,7 @@ impl LaxaFlow {
     /// `pools` must have basis-point allocations that sum to exactly 10 000.
     pub fn set_pools(env: Env, admin: Address, pools: Vec<PoolConfig>) {
         Self::require_admin(&env, &admin);
+        assert!(!Self::is_paused(&env), "Contract is paused");
 
         let mut total_bps: u32 = 0;
         let mut names: Vec<Symbol> = Vec::new(&env);
@@ -379,6 +385,10 @@ impl LaxaFlow {
     pub fn set_paused(env: Env, admin: Address, paused: bool) {
         Self::require_admin(&env, &admin);
         env.storage().persistent().set(&DataKey::Paused, &paused);
+        env.events().publish(
+            (symbol_short!("pause"), admin),
+            paused,
+        );
     }
 
     /// Upgrades the contract WASM code to a new version (Admin only).
