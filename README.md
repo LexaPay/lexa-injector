@@ -71,8 +71,20 @@ All powered by Stellar's low-cost, high-throughput network.
 
 | Function | Parameters | Description |
 |---|---|---|
-| `set_pools` | `admin, pools: Vec<PoolConfig>` | Configure split matrix (bps must sum to 10 000) |
-| `distribute` | `admin, total_amount: i128` | One-click distribution across all pools |
+| `set_pools` | `admin: Address, pools: Vec<PoolConfig>` | Configure split matrix (bps must sum to 10 000) |
+| `distribute` | `admin: Address, total_amount: i128` | One-click distribution across all pools |
+
+### Circuit Breaker & Governance
+
+| Function | Parameters | Description |
+|---|---|---|
+| `set_paused` | `admin: Address, paused: bool` | Globally pause/unpause contract operations |
+| `is_paused` | — | Query emergency circuit breaker status |
+| `check_admin` | `admin: Address` | Check if address is the contract admin |
+| `change_admin` | `admin: Address, new_admin: Address` | Transfer administrative ownership |
+| `upgrade` | `admin: Address, new_wasm_hash: BytesN<32>` | Upgrade contract WASM code |
+
+> 📖 **Full API Reference**: For complete method signatures, parameter types, error states, and SDK integration code snippets, see [docs/api_reference.md](docs/api_reference.md).
 
 ### Data Types
 
@@ -82,11 +94,14 @@ pub struct StreamConfig {
     pub start: u64,           // stream start timestamp
     pub last_claim: u64,      // last claim timestamp
     pub total_claimed: i128,  // cumulative claimed
+    pub cliff: u64,           // cliff timestamp (0 = no cliff)
+    pub paused: bool,         // individual stream pause status
+    pub paused_at: u64,       // timestamp of pause
 }
 
 pub struct PoolConfig {
     pub name: Symbol,         // pool identifier
-    pub bps: u32,             // basis points (6000 = 60%)
+    pub bps: u32,             // basis points (6000 = 60%, 10000 = 100%)
     pub members: Vec<Address>,// pool members
 }
 ```
